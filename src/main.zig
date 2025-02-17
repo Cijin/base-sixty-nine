@@ -3,6 +3,7 @@ const math = std.math;
 
 const EncodeError = error{
     EmptyInput,
+    NotBase64,
 };
 
 const base64 = struct {
@@ -16,11 +17,14 @@ const base64 = struct {
         return base64{ .lookupTable = upper ++ lower ++ symbols };
     }
 
-    pub fn charAt(self: base64, i: u8) u8 {
+    pub fn charAt(self: base64, i: u8) EncodeError!u8 {
+        if (i >= 64) {
+            return EncodeError.NotBase64;
+        }
         return self.lookupTable[i];
     }
 
-    pub fn encode(_: base64, text: []u8) EncodeError![]u8 {
+    pub fn encode(self: base64, text: []u8) EncodeError![]u8 {
         if (text.len == 0) {
             return EncodeError.EmptyInput;
         }
@@ -34,14 +38,25 @@ const base64 = struct {
         }
         const encoded: [encodedTextLen]u8 = undefined;
 
-        _ = encoded;
-        // Todo:
-        // Test out with an outbuffer of 4 with input ex:'Lil'
-        // go through 3 bytes at a time
-        // output byte 1: in_byte[0] & b11111100
-        // output byte 2: in_byte[0] & 00000011 << 6 + in_byte[1] >> 2
-        // output byte 3: in_byte[1] & 00000011 << 6 + in_byte[2] >> 2
-        // output byte 4: in_byte[2] & 00000011 << 6 + in_byte[3] >> 2
+        var isStart: bool = true;
+        for (text, 0..encodedTextLen) |c, i| {
+            if (i % 4 == 0) {
+                if (isStart) {
+                    encoded[i] = try self.charAt(c >> 2);
+                    encoded[i + 1] = c << 4;
+                    isStart = false;
+                } else {
+                    // Todo:
+                    // what to do on the last one?
+                    // When to insert '='?
+                    isStart = true;
+                }
+                continue;
+            }
+
+            encoded[i] = try self.charAt(encoded[i - 1] | c >> 4);
+            encoded[i + 1] = c << 4;
+        }
     }
 };
 
