@@ -21,9 +21,23 @@ const base64 = struct {
         return base64{ .lookupTable = upper.* ++ lower.* ++ symbols.* };
     }
 
-    pub fn charAt(self: base64, i: u8) u8 {
+    fn charAt(self: base64, i: u8) u8 {
         assert(i < 64);
         return self.lookupTable[i];
+    }
+
+    fn index(self: base64, char: u8) !u8 {
+        if (char == '=') {
+            return 64;
+        }
+
+        for (self.lookupTable, 0..) |c, i| {
+            if (c == char) {
+                return @intCast(i);
+            }
+        }
+
+        return EncodeError.NotBase64;
     }
 
     pub fn encode(self: base64, allocator: mem.Allocator, text: []const u8) ![]u8 {
@@ -50,8 +64,8 @@ const base64 = struct {
 
             if (bufIdx == 3) {
                 encoded[encodedIdx] = self.charAt(buf[0] >> 2);
-                encoded[encodedIdx + 1] = self.charAt(((buf[0] & 0x03) << 4) + buf[1] >> 4);
-                encoded[encodedIdx + 2] = self.charAt(((buf[1] & 0x0f) << 2) + buf[2] >> 6);
+                encoded[encodedIdx + 1] = self.charAt(((buf[0] & 0x03) << 4) | buf[1] >> 4);
+                encoded[encodedIdx + 2] = self.charAt(((buf[1] & 0x0f) << 2) | buf[2] >> 6);
                 encoded[encodedIdx + 3] = self.charAt((buf[2] & 0x3f));
 
                 encodedIdx += 4;
@@ -80,8 +94,45 @@ const base64 = struct {
         }
 
         assert(encodedIdx == encodedTextLen);
-
         return encoded;
+    }
+
+    pub fn decode(self: base64, allocator: mem.Allocator, encoded: []const u8) ![]u8 {
+        assert(encoded.len > 0);
+
+        var decodedTextLen: usize = 0;
+        if (encoded.len <= 4) {
+            decodedTextLen = 3;
+        } else {
+            decodedTextLen = try math.divFloor(usize, encoded.len - 1, 4);
+            decodedTextLen = decodedTextLen * 3;
+        }
+
+        const decoded = try allocator.alloc(u8, decodedTextLen);
+        var decodedIdx: usize = 0;
+        var buf = [4]u8{ 0, 0, 0, 0 };
+        var bufIdx: u8 = 0;
+
+        for (encoded) |c| {
+            buf[bufIdx] = try self.index(c);
+            bufIdx += 1;
+
+            if (bufIdx == 4) {
+                decoded[decodedIdx] = (buf[0] << 2) | (buf[1] >> 4 & 0x03);
+                if (buf[2] != 64) {
+                    decoded[decodedIdx + 1] = buf[1] << 4 | (buf[2] >> 2 & 0x0f);
+                }
+                if (buf[3] != 64) {
+                    decoded[decodedIdx + 2] = buf[2] << 6 | (buf[3] & 0x3f);
+                }
+
+                decodedIdx += 3;
+                bufIdx = 0;
+            }
+        }
+
+        assert(decodedIdx == decodedTextLen);
+        return decoded;
     }
 };
 
@@ -100,5 +151,11 @@ pub fn main() !void {
     };
     defer allocator.free(encoded);
 
-    print("The base64 encoded string of '{s}' is '{s}'\n", .{ input, encoded });
+    const decoded = base64Encoder.decode(allocator, encoded) catch |err| {
+        print("There was an error while decoding:{any}\n", .{err});
+        return;
+    };
+    defer allocator.free(decoded);
+
+    assert(mem.eql(u8, input, decoded));
 }
